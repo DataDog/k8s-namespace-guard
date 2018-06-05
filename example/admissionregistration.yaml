@@ -2,25 +2,24 @@
 # k8s-namespace-guard Admission webhook registration
 ########################################################
 # Please update the CABundle with valid CA
-
-apiVersion: admissionregistration.k8s.io/v1alpha1
-kind: ExternalAdmissionHookConfiguration
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: ValidatingWebhookConfiguration
 metadata:
   name: k8s-namespace-guard
-externalAdmissionHooks:
-  - name: k8s-namespace-guard.yahoo.io
-    rules:
-      - operations:
-          - DELETE
-        apiGroups:
-          - ""
-        apiVersions:
-          - v1
-        resources:
-          - namespaces
-    failurePolicy: Fail
-    clientConfig:
-      service:
-        namespace: default
-        name: k8s-namespace-guard 
-      caBundle:	
+webhooks:
+- name: k8s-namespace-guard.yahoo.io
+  rules:
+  - operations:
+    - DELETE
+    apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - namespaces
+  failurePolicy: Fail
+  clientConfig:
+    service:
+      name: k8s-namespace-guard
+      namespace: default
+    caBundle: ""
