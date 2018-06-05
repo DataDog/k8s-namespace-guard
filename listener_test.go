@@ -1,11 +1,10 @@
-// Copyright 2017 Yahoo Holdings Inc. 
+// Copyright 2017 Yahoo Holdings Inc.
 // Licensed under the terms of the 3-Clause BSD License.
 package main
 
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -13,16 +12,15 @@ import (
 	"os/user"
 	"testing"
 
-	"k8s.io/api/admission/v1alpha1"
+	admissionv1 "k8s.io/api/admission/v1beta1"
+	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	corev1 "k8s.io/api/core/v1"
+	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/pkg/api"
-	corev1 "k8s.io/client-go/pkg/api/v1"
-	appsv1beta1 "k8s.io/client-go/pkg/apis/apps/v1beta1"
-	autoscalingv1 "k8s.io/client-go/pkg/apis/autoscaling/v1"
-	extensionsv1beta1 "k8s.io/client-go/pkg/apis/extensions/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -37,8 +35,8 @@ var (
 			Finalizers: []corev1.FinalizerName{"kubernetes"},
 		},
 	}
-	templateAdmReview = &v1alpha1.AdmissionReview{
-		Spec: v1alpha1.AdmissionReviewSpec{
+	templateAdmReview = &admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
 			Resource: v1.GroupVersionResource{
 				Group:    "",
 				Version:  "v1",
@@ -66,26 +64,8 @@ var (
 	}
 )
 
-func cloneNamespace(templateNamespace *corev1.Namespace) *corev1.Namespace {
-	testNamespaceObj, err := api.Scheme.DeepCopy(templateNamespace)
-	testNamespace, ok := testNamespaceObj.(*corev1.Namespace)
-	if err != nil || !ok {
-		panic(fmt.Sprintf("Cloning Namespace failed with err: %v, ok: %t", err, ok))
-	}
-	return testNamespace
-}
-
-func cloneAdmissionReview(templateAdmReview *v1alpha1.AdmissionReview) *v1alpha1.AdmissionReview {
-	testAdmReviewObj, err := api.Scheme.DeepCopy(templateAdmReview)
-	testAdmReview, ok := testAdmReviewObj.(*v1alpha1.AdmissionReview)
-	if err != nil || !ok {
-		panic(fmt.Sprintf("Cloning test AdmissionReview spec failed with err: %v, ok: %t", err, ok))
-	}
-	return testAdmReview
-}
-
-func getAdmissionReview(rw *httptest.ResponseRecorder) *v1alpha1.AdmissionReview {
-	admReview := &v1alpha1.AdmissionReview{}
+func getAdmissionReview(rw *httptest.ResponseRecorder) *admissionv1.AdmissionReview {
+	admReview := &admissionv1.AdmissionReview{}
 	err := json.NewDecoder(rw.Result().Body).Decode(admReview)
 	if err != nil {
 		panic(err.Error())
@@ -93,7 +73,7 @@ func getAdmissionReview(rw *httptest.ResponseRecorder) *v1alpha1.AdmissionReview
 	return admReview
 }
 
-func constructPostBody(admReview *v1alpha1.AdmissionReview) io.Reader {
+func constructPostBody(admReview *admissionv1.AdmissionReview) io.Reader {
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(admReview)
 	if err != nil {
@@ -104,13 +84,15 @@ func constructPostBody(admReview *v1alpha1.AdmissionReview) io.Reader {
 
 func TestAllowedWriteResponse(t *testing.T) {
 	rw := httptest.NewRecorder()
-	review := &v1alpha1.AdmissionReview{}
+	review := &admissionv1.AdmissionReview{
+		Request: new(admissionv1.AdmissionRequest),
+	}
 	writeResponse(rw, review, true, "")
 
 	admReview := getAdmissionReview(rw)
 
-	expectedAdmReview := &v1alpha1.AdmissionReview{
-		Status: v1alpha1.AdmissionReviewStatus{
+	expectedAdmReview := &admissionv1.AdmissionReview{
+		Response: &admissionv1.AdmissionResponse{
 			Allowed: true,
 			Result: &v1.Status{
 				Reason: v1.StatusReason(""),
@@ -118,20 +100,22 @@ func TestAllowedWriteResponse(t *testing.T) {
 		},
 	}
 	assert.Equal(t,
-		expectedAdmReview.Status,
-		admReview.Status,
-		"writeResponse should write Allowed: true for AdmissionReviewStatus")
+		expectedAdmReview.Response,
+		admReview.Response,
+		"writeResponse should write Allowed: true for AdmissionResponse")
 }
 
 func TestNotAllowedWriteResponse(t *testing.T) {
 	rw := httptest.NewRecorder()
-	review := &v1alpha1.AdmissionReview{}
+	review := &admissionv1.AdmissionReview{
+		Request: new(admissionv1.AdmissionRequest),
+	}
 	writeResponse(rw, review, false, "Namespace test-namespace contains one or more resources")
 
 	admReview := getAdmissionReview(rw)
 
-	expectedAdmReview := &v1alpha1.AdmissionReview{
-		Status: v1alpha1.AdmissionReviewStatus{
+	expectedAdmReview := &admissionv1.AdmissionReview{
+		Response: &admissionv1.AdmissionResponse{
 			Allowed: false,
 			Result: &v1.Status{
 				Reason: v1.StatusReason("Namespace test-namespace contains one or more resources"),
@@ -139,9 +123,9 @@ func TestNotAllowedWriteResponse(t *testing.T) {
 		},
 	}
 	assert.Equal(t,
-		expectedAdmReview.Status,
-		admReview.Status,
-		"writeResponse should write Allowed: false for AdmissionReviewStatus")
+		expectedAdmReview.Response,
+		admReview.Response,
+		"writeResponse should write Allowed: false for AdmissionResponse")
 }
 
 func TestWrongMethodWebhookHandler(t *testing.T) {
@@ -173,14 +157,14 @@ func TestWrongReqBodyWebhookHandler(t *testing.T) {
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should fail if request doesn't have a body")
-	assert.Contains(t, admReview.Status.Result.Reason, "Failed to decode the request body json into an AdmissionReview resource: ")
+	assert.False(t, admReview.Response.Allowed, "should fail if request doesn't have a body")
+	assert.Contains(t, admReview.Response.Result.Reason, "Failed to decode the request body json into an AdmissionReview resource: ")
 }
 
 func TestAdmitAllWebhookHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 
 	*admitAll = true
 
@@ -189,15 +173,15 @@ func TestAdmitAllWebhookHandler(t *testing.T) {
 
 	admReview := getAdmissionReview(rw)
 
-	assert.True(t, admReview.Status.Allowed, "should allow namespace delete to pass through if admitAll flag is set")
+	assert.True(t, admReview.Response.Allowed, "should allow namespace delete to pass through if admitAll flag is set")
 	*admitAll = false
 }
 
 func TestNamespaceResourceTypeWebhookHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 
-	testSpec := &v1alpha1.AdmissionReview{
-		Spec: v1alpha1.AdmissionReviewSpec{
+	testSpec := &admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
 			Resource: v1.GroupVersionResource{
 				Group:    "",
 				Version:  "v1",
@@ -211,37 +195,37 @@ func TestNamespaceResourceTypeWebhookHandler(t *testing.T) {
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should reject if the resource is not Namespace type")
-	assert.Contains(t, admReview.Status.Result.Reason, "Incoming resource is not a Namespace: { v1 pods}")
+	assert.False(t, admReview.Response.Allowed, "should reject if the resource is not Namespace type")
+	assert.Contains(t, admReview.Response.Result.Reason, "Incoming resource is not a Namespace: { v1 pods}")
 }
 
 func TestWrongOperationWebhookHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 
-	testSpec.Spec.Operation = v1alpha1.Create
+	testSpec.Request.Operation = admissionv1.Create
 
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should reject if the operation is NOT DELETE")
-	assert.Contains(t, admReview.Status.Result.Reason, "Incoming operation is CREATE on namespace test-namespace. Only DELETE is currently supported.")
+	assert.False(t, admReview.Response.Allowed, "should reject if the operation is NOT DELETE")
+	assert.Contains(t, admReview.Response.Result.Reason, "Incoming operation is CREATE on namespace test-namespace. Only DELETE is currently supported.")
 }
 
 func TestNonExistingNamespaceWebhookHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 	clientset = &fake.Clientset{}
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.True(t, admReview.Status.Allowed, "should approve if the namespace does not exist")
+	assert.True(t, admReview.Response.Allowed, "should approve if the namespace does not exist")
 }
 
 func TestBypassAnnotationTrueWebhookHandler(t *testing.T) {
@@ -256,18 +240,18 @@ func TestBypassAnnotationTrueWebhookHandler(t *testing.T) {
 			Hostname: "test-pod.yahoo.com",
 		},
 	}
-	testNamespace := cloneNamespace(templateNamespace)
+	testNamespace := templateNamespace.DeepCopy()
 	testNamespace.Annotations = map[string]string{bypassAnnotationKey: "true"}
 	clientset = fake.NewSimpleClientset(testPod, testNamespace)
 
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.True(t, admReview.Status.Allowed, "should approve if the bypass annotation is set to true")
+	assert.True(t, admReview.Response.Allowed, "should approve if the bypass annotation is set to true")
 }
 
 func TestBypassAnnotationFalseWebhookHandler(t *testing.T) {
@@ -282,33 +266,33 @@ func TestBypassAnnotationFalseWebhookHandler(t *testing.T) {
 			Hostname: "test-pod.yahoo.com",
 		},
 	}
-	testNamespace := cloneNamespace(templateNamespace)
+	testNamespace := templateNamespace.DeepCopy()
 	testNamespace.Annotations = map[string]string{bypassAnnotationKey: "false"}
 	clientset = fake.NewSimpleClientset(testPod, testNamespace)
 
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should reject if the namespace has pod resources and bypass annotation is set to false")
-	assert.Contains(t, admReview.Status.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1)]. Please delete them and try again.")
+	assert.False(t, admReview.Response.Allowed, "should reject if the namespace has pod resources and bypass annotation is set to false")
+	assert.Contains(t, admReview.Response.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1)]. Please delete them and try again.")
 }
 
 func TestEmptyNamespaceWebhookHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 
-	testNamespace := cloneNamespace(templateNamespace)
+	testNamespace := templateNamespace.DeepCopy()
 	clientset = fake.NewSimpleClientset(testNamespace)
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testSpec := templateAdmReview.DeepCopy()
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.True(t, admReview.Status.Allowed, "should approve if the namespace has no workload resources")
+	assert.True(t, admReview.Response.Allowed, "should approve if the namespace has no workload resources")
 }
 
 func TestNonEmptyNamespaceWebhookHandler(t *testing.T) {
@@ -323,16 +307,16 @@ func TestNonEmptyNamespaceWebhookHandler(t *testing.T) {
 			Hostname: "test-pod.yahoo.com",
 		},
 	}
-	testNamespace := cloneNamespace(templateNamespace)
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testNamespace := templateNamespace.DeepCopy()
+	testSpec := templateAdmReview.DeepCopy()
 	clientset = fake.NewSimpleClientset(testPod, testNamespace)
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should reject if the namespace has pod resources")
-	assert.Contains(t, admReview.Status.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1)]. Please delete them and try again.")
+	assert.False(t, admReview.Response.Allowed, "should reject if the namespace has pod resources")
+	assert.Contains(t, admReview.Response.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1)]. Please delete them and try again.")
 }
 
 func TestNonEmptyNamespaceWithMoreResourcesWebhookHandler(t *testing.T) {
@@ -422,16 +406,16 @@ func TestNonEmptyNamespaceWithMoreResourcesWebhookHandler(t *testing.T) {
 			Namespace: "test-namespace",
 		},
 	}
-	testNamespace := cloneNamespace(templateNamespace)
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testNamespace := templateNamespace.DeepCopy()
+	testSpec := templateAdmReview.DeepCopy()
 	clientset = fake.NewSimpleClientset(testNamespace, testPod, testSvc, testReplicaSet, testDeployment, testStatefulSet, testDaemonSet, testIngress, testHpa, testCm, testSecret)
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.False(t, admReview.Status.Allowed, "should reject if the namespace has workload resources")
-	assert.Contains(t, admReview.Status.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1) services(1) replicasets(1) deployments(1) statefulsets(1) daemonsets(1) ingresses(1) horizontalpodautoscalers(1)]. Please delete them and try again.")
+	assert.False(t, admReview.Response.Allowed, "should reject if the namespace has workload resources")
+	assert.Contains(t, admReview.Response.Result.Reason, "The namespace test-namespace you are trying to remove contains one or more of these resources: [pods(1) services(1) replicasets(1) deployments(1) statefulsets(1) daemonsets(1) ingresses(1) horizontalpodautoscalers(1)]. Please delete them and try again.")
 }
 
 func TestNonEmptyNamespaceWithIgnoredResourcesWebhookHandler(t *testing.T) {
@@ -449,15 +433,15 @@ func TestNonEmptyNamespaceWithIgnoredResourcesWebhookHandler(t *testing.T) {
 			Namespace: "test-namespace",
 		},
 	}
-	testNamespace := cloneNamespace(templateNamespace)
-	testSpec := cloneAdmissionReview(templateAdmReview)
+	testNamespace := templateNamespace.DeepCopy()
+	testSpec := templateAdmReview.DeepCopy()
 	clientset = fake.NewSimpleClientset(testNamespace, testCm, testSecret)
 	req := httptest.NewRequest("POST", "http://localhost:8080/", constructPostBody(testSpec))
 	webhookHandler(rw, req)
 
 	admReview := getAdmissionReview(rw)
 
-	assert.True(t, admReview.Status.Allowed, "should approve if the namespace has ignored resources")
+	assert.True(t, admReview.Response.Allowed, "should approve if the namespace has ignored resources")
 }
 
 func TestStatusHandler200(t *testing.T) {

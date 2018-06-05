@@ -1,4 +1,4 @@
-// Copyright 2017 Yahoo Holdings Inc. 
+// Copyright 2017 Yahoo Holdings Inc.
 // Licensed under the terms of the 3-Clause BSD License.
 package main
 
@@ -10,7 +10,8 @@ import (
 	"io"
 	"net/http"
 
-	"k8s.io/api/admission/v1alpha1"
+	"github.com/golang/glog"
+	admissionv1 "k8s.io/api/admission/v1beta1"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -24,17 +25,17 @@ var (
 )
 
 // writeResponse writes the admissionReviewStatus object to the response body
-func writeResponse(rw http.ResponseWriter, admReview *v1alpha1.AdmissionReview, allowed bool, errorMsg string) {
-	log.Infof("Responding Allowed: %t for %s on Namespace: %s by user: %s", allowed,
-		admReview.Spec.Operation,
-		admReview.Spec.Name,
-		admReview.Spec.UserInfo.Username)
+func writeResponse(rw http.ResponseWriter, admReview *admissionv1.AdmissionReview, allowed bool, errorMsg string) {
+	glog.Infof("Responding Allowed: %t for %s on Namespace: %s by user: %s", allowed,
+		admReview.Request.Operation,
+		admReview.Request.Name,
+		admReview.Request.UserInfo.Username)
 
 	if !allowed {
-		log.Errorf("Rejection reason: %s", errorMsg)
+		glog.Errorf("Rejection reason: %s", errorMsg)
 	}
 
-	admReview.Status = v1alpha1.AdmissionReviewStatus{
+	admReview.Response = &admissionv1.AdmissionResponse{
 		Allowed: allowed,
 		Result: &v1.Status{
 			Reason: v1.StatusReason(errorMsg),
@@ -161,7 +162,7 @@ func validateNamespaceDeletion(namespace string) (err error) {
 
 // webhookHandler handles the namespace deletion guard admission webhook
 func webhookHandler(rw http.ResponseWriter, req *http.Request) {
-	log.Infof("Serving %s %s request for client: %s", req.Method, req.URL.Path, req.RemoteAddr)
+	glog.Infof("Serving %s %s request for client: %s", req.Method, req.URL.Path, req.RemoteAddr)
 
 	if req.Method != http.MethodPost {
 		http.Error(rw, fmt.Sprintf("Incoming request method %s is not supported, only POST is supported", req.Method), http.StatusMethodNotAllowed)
@@ -173,42 +174,44 @@ func webhookHandler(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	admReview := v1alpha1.AdmissionReview{}
+	admReview := admissionv1.AdmissionReview{}
 	err := json.NewDecoder(req.Body).Decode(&admReview)
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to decode the request body json into an AdmissionReview resource: %s", err.Error())
-		writeResponse(rw, &v1alpha1.AdmissionReview{}, false, errorMsg)
+		writeResponse(rw, &admissionv1.AdmissionReview{
+			Request: new(admissionv1.AdmissionRequest),
+		}, false, errorMsg)
 		return
 	}
-	log.Debugf("Incoming AdmissionReview for %s on resource: %v, kind: %v", admReview.Spec.Operation, admReview.Spec.Resource, admReview.Spec.Kind)
+	glog.Infof("Incoming AdmissionReview for %s on resource: %v, kind: %v", admReview.Request.Operation, admReview.Request.Resource, admReview.Request.Kind)
 
 	if *admitAll == true {
-		log.Warnf("admitAll flag is set to true. Allowing Namespace admission review request to pass without validation.")
+		glog.Warningf("admitAll flag is set to true. Allowing Namespace admission review request to pass without validation.")
 		writeResponse(rw, &admReview, true, "")
 		return
 	}
 
-	if admReview.Spec.Resource != namespaceResourceType {
-		errorMsg := fmt.Sprintf("Incoming resource is not a Namespace: %v", admReview.Spec.Resource)
+	if admReview.Request.Resource != namespaceResourceType {
+		errorMsg := fmt.Sprintf("Incoming resource is not a Namespace: %v", admReview.Request.Resource)
 		writeResponse(rw, &admReview, false, errorMsg)
 		return
 	}
 
-	if admReview.Spec.Operation != v1alpha1.Delete {
-		errorMsg := fmt.Sprintf("Incoming operation is %v on namespace %s. Only DELETE is currently supported.", admReview.Spec.Operation, admReview.Spec.Name)
+	if admReview.Request.Operation != admissionv1.Delete {
+		errorMsg := fmt.Sprintf("Incoming operation is %v on namespace %s. Only DELETE is currently supported.", admReview.Request.Operation, admReview.Request.Name)
 		writeResponse(rw, &admReview, false, errorMsg)
 		return
 	}
 
-	namespace, err := clientset.CoreV1().Namespaces().Get(admReview.Spec.Name, v1.GetOptions{})
+	namespace, err := clientset.CoreV1().Namespaces().Get(admReview.Request.Name, v1.GetOptions{})
 	if err != nil {
 		// If the namespace is not found, approve the request and let apiserver handle the case
 		// For any other error, reject the request
 		if apiErrors.IsNotFound(err) {
-			log.Debugf("Namespace %s not found, let apiserver handle the error: %s", admReview.Spec.Name, err.Error())
+			glog.Infof("Namespace %s not found, let apiserver handle the error: %s", admReview.Request.Name, err.Error())
 			writeResponse(rw, &admReview, true, "")
 		} else {
-			errorMsg := fmt.Sprintf("Error occurred while retrieving the namespace %s: %s", admReview.Spec.Name, err.Error())
+			errorMsg := fmt.Sprintf("Error occurred while retrieving the namespace %s: %s", admReview.Request.Name, err.Error())
 			writeResponse(rw, &admReview, false, errorMsg)
 		}
 		return
@@ -216,18 +219,18 @@ func webhookHandler(rw http.ResponseWriter, req *http.Request) {
 
 	if annotations := namespace.GetAnnotations(); annotations != nil {
 		if annotations[bypassAnnotationKey] == "true" {
-			log.Infof("Namespace %s has the bypass annotation set[%s:true]. OK to DELETE.", admReview.Spec.Name, bypassAnnotationKey)
+			glog.Infof("Namespace %s has the bypass annotation set[%s:true]. OK to DELETE.", admReview.Request.Name, bypassAnnotationKey)
 			writeResponse(rw, &admReview, true, "")
 			return
 		}
 	}
 
-	err = validateNamespaceDeletion(admReview.Spec.Name)
+	err = validateNamespaceDeletion(admReview.Request.Name)
 	if err != nil {
 		writeResponse(rw, &admReview, false, err.Error())
 		return
 	}
 
-	log.Infof("Namespace %s does not contain any workload resources. OK to DELETE.", admReview.Spec.Name)
+	glog.Infof("Namespace %s does not contain any workload resources. OK to DELETE.", admReview.Request.Name)
 	writeResponse(rw, &admReview, true, "")
 }
