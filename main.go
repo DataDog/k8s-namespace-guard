@@ -7,15 +7,15 @@ import (
 	"crypto/x509"
 	"flag"
 	"io"
-	"net/http"
-
 	"io/ioutil"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/golang/glog"
 	"k8s.io/client-go/kubernetes"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -115,7 +115,7 @@ func main() {
 }
 
 func getKubernetesConfig() (*rest.Config, error) {
-	if *kubeConfig == "" {
+	if *kubeConfig != "" {
 		cfg, err := clientcmd.BuildConfigFromFlags("", *kubeConfig)
 		if err != nil {
 			return nil, err

@@ -14,10 +14,6 @@
   name = "k8s.io/client-go"
   version = "kubernetes-1.10.3"
 
-[[constraint]]
-  name = "github.com/golang/glog"
-  branch = "master"
-
 [prune]
   go-tests = true
   unused-packages = true
