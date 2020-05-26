@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"github.com/golang/glog"
 	admissionv1 "k8s.io/api/admission/v1beta1"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -52,7 +53,7 @@ func writeResponse(rw http.ResponseWriter, admReview *admissionv1.AdmissionRevie
 }
 
 func podCounter(namespace string) (int, error) {
-	list, err := clientset.CoreV1().Pods(namespace).List(v1.ListOptions{})
+	list, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -60,7 +61,7 @@ func podCounter(namespace string) (int, error) {
 }
 
 func serviceCounter(namespace string) (int, error) {
-	list, err := clientset.CoreV1().Services(namespace).List(v1.ListOptions{})
+	list, err := clientset.CoreV1().Services(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -68,7 +69,7 @@ func serviceCounter(namespace string) (int, error) {
 }
 
 func replicasetCounter(namespace string) (int, error) {
-	list, err := clientset.ExtensionsV1beta1().ReplicaSets(namespace).List(v1.ListOptions{})
+	list, err := clientset.AppsV1().ReplicaSets(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -76,7 +77,7 @@ func replicasetCounter(namespace string) (int, error) {
 }
 
 func deploymentCounter(namespace string) (int, error) {
-	list, err := clientset.AppsV1beta1().Deployments(namespace).List(v1.ListOptions{})
+	list, err := clientset.AppsV1().Deployments(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -84,7 +85,7 @@ func deploymentCounter(namespace string) (int, error) {
 }
 
 func statefulsetCounter(namespace string) (int, error) {
-	list, err := clientset.AppsV1beta1().StatefulSets(namespace).List(v1.ListOptions{})
+	list, err := clientset.AppsV1().StatefulSets(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -92,7 +93,7 @@ func statefulsetCounter(namespace string) (int, error) {
 }
 
 func daemonsetCounter(namespace string) (int, error) {
-	list, err := clientset.ExtensionsV1beta1().DaemonSets(namespace).List(v1.ListOptions{})
+	list, err := clientset.AppsV1().DaemonSets(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -100,7 +101,7 @@ func daemonsetCounter(namespace string) (int, error) {
 }
 
 func ingressCounter(namespace string) (int, error) {
-	list, err := clientset.ExtensionsV1beta1().Ingresses(namespace).List(v1.ListOptions{})
+	list, err := clientset.ExtensionsV1beta1().Ingresses(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -108,7 +109,7 @@ func ingressCounter(namespace string) (int, error) {
 }
 
 func autoScaleCounter(namespace string) (int, error) {
-	list, err := clientset.AutoscalingV1().HorizontalPodAutoscalers(namespace).List(v1.ListOptions{})
+	list, err := clientset.AutoscalingV1().HorizontalPodAutoscalers(namespace).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -203,7 +204,7 @@ func webhookHandler(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	namespace, err := clientset.CoreV1().Namespaces().Get(admReview.Request.Name, v1.GetOptions{})
+	namespace, err := clientset.CoreV1().Namespaces().Get(context.TODO(), admReview.Request.Name, v1.GetOptions{})
 	if err != nil {
 		// If the namespace is not found, approve the request and let apiserver handle the case
 		// For any other error, reject the request
